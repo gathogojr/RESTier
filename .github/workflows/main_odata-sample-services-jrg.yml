@@ -1,7 +1,7 @@
 # Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
 # More GitHub Actions for Azure: https://github.com/Azure/actions
 
-name: Build and deploy ASP.Net Core app to Azure Web App - odata-samples-services-jrg
+name: Build and deploy ASP.Net Core app to Azure Web App - odata-sample-services-jrg
 
 on:
   push:
@@ -23,10 +23,10 @@ jobs:
           include-prerelease: true
 
       - name: Build with dotnet
-        run: dotnet build "src/Microsoft.Restier.Samples.Northwind.AspNetCore/Microsoft.Restier.Samples.Northwind.AspNetCore.csproj" --configuration Release
+        run: dotnet build --configuration Release
 
       - name: dotnet publish
-        run: dotnet publish "src/Microsoft.Restier.Samples.Northwind.AspNetCore/Microsoft.Restier.Samples.Northwind.AspNetCore.csproj" -c Release -o ${{env.DOTNET_ROOT}}/myapp
+        run: dotnet publish -c Release -o ${{env.DOTNET_ROOT}}/myapp
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v3
@@ -48,19 +48,19 @@ jobs:
         uses: actions/download-artifact@v3
         with:
           name: .net-app
-
+      
       - name: Login to Azure
         uses: azure/login@v1
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_B9CBAC00AFFC41998BC3ABC950F26A10 }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_5DC6AB1689A34E64891D30DD5D3D9E7C }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_9488FFCB1B4F47438AEBAA4CE5AACD71 }}
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_851ADA79930F4A73A849FD6B03B7808A }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_A362DCAD41F14301B2694C5DCC0E353E }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_9C460A2A169F4DED994E7F9ED2168474 }}
 
       - name: Deploy to Azure Web App
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v2
         with:
-          app-name: 'odata-samples-services-jrg'
+          app-name: 'odata-sample-services-jrg'
           slot-name: 'Production'
           package: .
           
