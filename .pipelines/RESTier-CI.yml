@@ -1,0 +1,155 @@
+trigger:
+- main
+
+# name below is overridden by Set Build Name step
+name: 1.0.0-CI-$(Date:yyyyMMdd)$(Rev:.r)
+
+variables:
+  BuildConfiguration: Release
+
+stages:
+
+# ============================================================
+# Build stage
+# ============================================================
+- stage: Build
+  displayName: Build and Pack Restier
+  jobs:
+  - job: Build
+    pool:
+      vmImage: windows-latest
+    steps:
+    - checkout: self
+
+    # --- Set Build Name ---
+    - powershell: |
+        $buildName = "1.2.0-CI-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+        Write-Host "##vso[build.updatebuildnumber]$buildName"
+      displayName: Set Build Name
+
+    # --- SDKs ---
+    - task: UseDotNet@2
+      displayName: Use .NET SDK 9.x
+      inputs:
+        packageType: sdk
+        version: 9.x
+
+    - task: UseDotNet@2
+      displayName: Use .NET SDK 8.x
+      inputs:
+        packageType: sdk
+        version: 8.x
+
+    # --- Restore & Build ---
+    - script: dotnet restore
+      displayName: dotnet restore
+
+    - script: dotnet build --configuration $(BuildConfiguration) --no-restore
+      displayName: dotnet build
+
+    # --- Pack (single controlled output) ---
+    - task: DotNetCoreCLI@2
+      displayName: dotnet pack
+      inputs:
+        command: custom
+        custom: pack
+        arguments: >
+          --configuration $(BuildConfiguration)
+          --no-build
+          --output $(Agent.TempDirectory)/Packages
+          /p:PackageVersion=$(Build.BuildNumber)
+          /p:SymbolPackageFormat=snupkg
+
+    # --- Validate pack outputs ---
+    - powershell: |
+        if (-not (Get-ChildItem "$(Agent.TempDirectory)/Packages" -Filter *.nupkg)) {
+          throw "No nupkg produced"
+        }
+        if (-not (Get-ChildItem "$(Agent.TempDirectory)/Packages" -Filter *.snupkg)) {
+          throw "No snupkg produced"
+        }
+      displayName: Validate package outputs
+
+    # --- Publish unsigned packages ---
+    - task: PublishPipelineArtifact@1
+      displayName: Publish Restier Packages
+      inputs:
+        targetPath: '$(Agent.TempDirectory)/Packages'
+        artifact: _unsignedPackages
+
+# ============================================================
+# Code signing stage
+# ============================================================
+- stage: CodeSign
+  displayName: Code Sign Packages
+  dependsOn: Build
+  condition: and(succeeded('Build')) # , not(eq(variables['Build.Reason'], 'PullRequest'))
+  jobs:
+  - deployment: CodeSign
+    displayName: Code Signing
+    pool:
+      vmImage: windows-latest
+    environment: Code Sign - Approvals
+    variables:
+    - group: Code Signing
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+
+          # --- Download unsigned packages ---
+          - task: DownloadPipelineArtifact@2
+            inputs:
+              artifact: _unsignedPackages
+              path: $(Pipeline.Workspace)/Packages
+
+          # --- Install dotnet sign tool ---
+          - task: DotNetCoreCLI@2
+            displayName: Install SignTool
+            inputs:
+              command: custom
+              custom: tool
+              arguments: install --tool-path . --prerelease sign
+
+          # --- Code signing using Azure Key Vault ---
+          - task: AzureCLI@2
+            displayName: Code signing - RESTier Packages
+            inputs:
+              azureSubscription: Code Signing
+              scriptType: pscore
+              scriptLocation: inlineScript
+              inlineScript: |
+                .\sign code azure-key-vault `
+                  "**/*.nupkg" `
+                  --base-directory "$(Pipeline.Workspace)/Packages" `
+                  --output "$(Build.ArtifactStagingDirectory)/SignedPackages" `
+                  --file-list "$(Pipeline.Workspace)/configs/filelist.txt" `
+                  --publisher-name "OData Labs" `
+                  --description "RESTier" `
+                  --description-url "https://github.com/OData/RESTier" `
+                  --azure-key-vault-certificate "$(SignKeyVaultCertificate)" `
+                  --azure-key-vault-url "$(SignKeyVaultUrl)"
+
+          # --- Copy snupkg  ---
+          - task: CopyFiles@2
+            displayName: Copy snupkg into SignedPackages
+            inputs:
+              SourceFolder: '$(Pipeline.Workspace)/Packages'
+              Contents: '*.snupkg'
+              TargetFolder: '$(Build.ArtifactStagingDirectory)/SignedPackages'
+              OverWrite: true
+
+          # --- Validate signing completeness ---
+
+          - powershell: |
+              $in  = (Get-ChildItem "$(Pipeline.Workspace)/Packages" -Filter *.nupkg).Count
+              $out = (Get-ChildItem "$(Build.ArtifactStagingDirectory)/SignedPackages" -Filter *.nupkg).Count
+              if ($in -ne $out) { throw "Signing incomplete" }
+            displayName: Validate signed packages
+
+          # --- Publish signed artifacts ---
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish Artifact: drop'
+            inputs:
+              targetPath: '$(Build.ArtifactStagingDirectory)'
+              artifact: drop
